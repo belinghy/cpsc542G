@@ -2,7 +2,7 @@
 n = 2^7 - 1;
 h = 2^-7;
 
-iter_max = 8;
+iter_max = 12;
 tol = 1.e-6;
 % initial guess for u, (n*n, 1)
 % u = zeros(n*n, 1) + 0.1;
@@ -24,8 +24,8 @@ for i=1:iter_max
   
   if norm_p < tol*(1+norm_u) || i == iter_max
     fprintf('%d: ', i)
-    fprintf('norm(exp(u), inf)=%0.10f | norm(u, 2)=%0.10f\n', ...
-      norm(exp(u),Inf)/sqrt(n), norm(u,2))
+    fprintf('norm(exp(u), inf)=%0.10f | norm(u,2)/sqrt(n)=%0.10f\n', ...
+      norm(exp(u),Inf), norm(u,2)/sqrt(n))
     break
   end
 end

@@ -24,8 +24,8 @@ for i=1:iter_max
   
   if norm_p < tol*(1+norm_u) || i == iter_max
     fprintf('%d: ', i)
-    fprintf('norm(exp(u), inf)=%0.10f | norm(u, 2)=%0.10f\n', ...
-      norm(exp(u),Inf)/sqrt(n), norm(u,2))
+    fprintf('norm(exp(u), inf)=%0.10f | norm(u,2)/sqrt(n)=%0.10f\n', ...
+      norm(exp(u),Inf), norm(u,2)/sqrt(n))
     break
   end
 end
@@ -34,3 +34,5 @@ pu = padarray(u2d, [1,1], 0);
 [X, Y] = meshgrid(0:1/(n+1):1);
 figure;
 surf(X, Y, pu)
+figure;
+plot(u)
