@@ -11,14 +11,21 @@ figure;
 hold on;
 plot(x, y_real);
 
-for n = 10:10:80
+ns = 10:10:80;
+errors = zeros(1,length(ns));
+loop_index = 1;
+for n = ns
   xi = f_xi(0:n,n);
   A = vander(xi); % Vandermonde, flipped
   yi = f(xi);
-  coeffs = A\yi';
+  [coeffs,fl] = gmres(A,yi',size(A,1),1e-5); % backslash blows up
+  disp(fl)
   
   y_interp = polyval(coeffs,x); % Polyval expect flipped
-  error = abs(y_real-y_interp);
+  errors(loop_index) = max(abs(y_real-y_interp));
   plot(x, y_interp);
-  max(error)
+  loop_index = loop_index + 1;
 end
+
+figure;
+semilogy(ns, errors);
