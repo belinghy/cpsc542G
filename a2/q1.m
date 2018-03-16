@@ -14,11 +14,13 @@ for n = ns
   xi = f_xi(0:n,n);
   A = vander(xi); % Vandermonde, flipped
   yi = f(xi);
-  [coeffs,fl] = gmres(A,yi',size(A,1),1e-5); % backslash blows up  
+  %[coeffs,fl] = gmres(A,yi',size(A,1),1e-5); % backslash blows up  
+  coeffs = A\yi';
   y_interp = polyval(coeffs,x); % Polyval expect flipped
   errors(loop_index) = max(abs(y_real-y_interp));
   plot(x, y_interp);
   loop_index = loop_index + 1;
+  pause;
 end
 
 figure;
