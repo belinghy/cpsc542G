@@ -18,9 +18,7 @@ for n = ns
   xi = f_xi(0:n,n);
   A = vander(xi); % Vandermonde, flipped
   yi = f(xi);
-  [coeffs,fl] = gmres(A,yi',size(A,1),1e-5); % backslash blows up
-  disp(fl)
-  
+  [coeffs,fl] = gmres(A,yi',size(A,1),1e-5); % backslash blows up  
   y_interp = polyval(coeffs,x); % Polyval expect flipped
   errors(loop_index) = max(abs(y_real-y_interp));
   plot(x, y_interp);
@@ -29,3 +27,5 @@ end
 
 figure;
 semilogy(ns, errors);
+xlabel('$n\ (degree)$','Interpreter','latex')
+ylabel('$max.\ error$','Interpreter','latex')
