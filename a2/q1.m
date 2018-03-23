@@ -18,7 +18,6 @@ for n = ns
   errors(loop_index) = max(abs(y_real-y_interp));
   plot(x, y_interp);
   loop_index = loop_index + 1;
-  pause;
 end
 
 figure;
