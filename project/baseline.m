@@ -1,6 +1,9 @@
 % This work follows parts of Bridson's notes
 % https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf
 
+% General stuff for working in 2D
+% reshape(A,M,M) is inverse of A(:)
+
 M = 128;  % square grid (MxM)
 hx = 1/M;
 density = 0.1;
@@ -11,7 +14,7 @@ image = zeros(M, M, 3); % RGA
 
 % fluid quantities in MAC Grid
 den_mat = zeros(M,M);
-press_mat = zeros(M,M);
+pressure_matrix = zeros(M,M);
 x_vel_mat = zeros(M,M+1); 
 y_vel_mat = zeros(M+1,M);
 
@@ -28,19 +31,43 @@ end
 % Problem setup functions
 
 % Solver functions
-function [dm, xm, ym] = step(x_vel, y_vel, timestep)
+function [density, x_vel, y_vel] = step(x_vel, y_vel, timestep)
   % Eq. (4.11)
   neg_divergence = M*(x_vel(:,2:end)-x_vel(:,1:end-1) + ...
     y_vel(2:end,:)-y_vel(1:end-1,:));
   
-  project(timestep, 600)
-  apply_pressue()
+  % Calculate pressure
+  pressure_matrix = project(neg_divergence, timestep, 600);
+  % Make incompressible fluid
+  x_vel, y_vel = applyPressure(x_vel, y_vel, pressure_matrix, timestep);
+  % 
   advect()
 end
 
-function project(timestep, max_iter)
+function p = project(neg_div, timestep, max_iter)
   % Eq. (4.19)
+  % Calculate pressure from divergence
+  
   scale = timestep / (density*hx*hx);
+  A = gallery('poisson', M);
+  % neg_div has size (M,M), convert to column
+  % pcg is good for poisson
+  % It's also general sparse + dense within band, so GEPP?
+  X = pcg(A, neg_div(:), 1e-5, max_iter);
+  p = reshape(X, M, M) / scale;
+end
+
+function [x_vel, y_vel] = applyPressure(x_vel, y_vel, pressure, timestep)
+  % Eq. (4.4) and (4.5)
+  scale = timestep / (density*hx);
+  
+  % P_i+1j - P_ij : (M,M-1)
+  x_vel(:,2:end-1) = x_vel(:,2:end-1) - ...
+    scale*(pressure(:,2:end) - pressure(:,1:end-1));
+  
+  % P_ij+1 - P_ij : (M-1,M)
+  y_vel(2:end-1,:) = y_vel(2:end-1,:) - ...
+  scale*(pressure(2:end,:) - pressure(1:end-1,:));
 end
 
 % Helper functions   
