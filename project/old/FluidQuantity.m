@@ -5,8 +5,7 @@ classdef FluidQuantity
     ox
     oy
     hx
-    src
-    dst
+    val
   end
   methods
     % Constructor
@@ -21,9 +20,7 @@ classdef FluidQuantity
       % hx - height and width of each cell
       obj.hx = hx;
       % src and dst are buffers for speed-up
-      obj.src = zeros(1,w*h);
-      obj.dst = zeros(1,w*h);
+      obj.val = zeros(w, h);
     end
-    function
   end
 end
