@@ -74,10 +74,10 @@ class FluidQuantity:
         x = min(max(x - self._ox, 0.0), self._w - 1.001)
         y = min(max(y - self._oy, 0.0), self._h - 1.001)
         # Extract integer and fractional parts
-        # Modf returned signed values, but it's ok since we check the
-        # bounds above, so x >= 0 and y >= 0
-        fx, ix = math.modf(x)
-        fy, iy = math.modf(y)
+        ix = (int)(x)
+        iy = (int)(y)
+        x -= ix
+        y -= iy
 
         x00 = self.at(ix+0, iy+0)
         x10 = self.at(ix+1, iy+0)
@@ -88,7 +88,24 @@ class FluidQuantity:
             """Simple 1D linear interpolation formula"""
             return a*(1-x) + b*x
 
-        return lerp(lerp(x00, x10, fx), lerp(x01, x11, fx), fy)
+        return lerp(lerp(x00, x10, x), lerp(x01, x11, x), y)
+
+    def apply_block(self, top_left, bot_right, f):
+        """Sets the fluid quantity within top_left and bot_right rectangle
+        to have value returned by f.
+
+        top_left: (x0, y0)
+        bot_right: (x1, y1)
+        f: ()
+        """
+        ix0 = (int)(top_left[0]/self._dx - self._ox)
+        iy0 = (int)(top_left[1]/self._dx - self._oy)
+        ix1 = (int)(bot_right[0]/self._dx - self._ox)
+        iy1 = (int)(bot_right[1]/self._dx - self._oy)
+
+        for iy in range(max(iy0, 0), min(iy1, self._h)):
+            for ix in range(max(ix0, 0), min(ix1, self._w)):
+                self.apply(ix, iy, f)
 
 
 class BaselineFluidSolver:
@@ -175,18 +192,19 @@ class BaselineFluidSolver:
                         off_diag -= coefficient * self._pressure[idx+1]
                     if iy + 1 < self._h:
                         diag += coefficient
-                        off_diag -= coefficient * self._pressure[idx-self._w]
+                        off_diag -= coefficient * self._pressure[idx+self._w]
 
                     new_pressure = (self._neg_div[idx] - off_diag) / diag
                     max_error = max(max_error, abs(
-                        self._pressure - new_pressure))
+                        self._pressure[idx] - new_pressure))
+                    self._pressure[idx] = new_pressure
 
             if max_error < tol:
-                print('Pressure solver converged in {} iterations, max. error is {}\n'.format(
+                print('Pressure solver converged in {} iterations, max. error is {}'.format(
                     cur_iter, max_error))
                 return
 
-        print('Exceeded max. iter. of {}, max. error is {}\n'.format(
+        print('Exceeded max. iter. of {}, max. error is {}'.format(
             max_iter, max_error))
 
     def make_incompressible(self, timestep):
@@ -201,13 +219,13 @@ class BaselineFluidSolver:
         for iy in range(self._h):
             for ix in range(self._w):
                 # self in lambda is referencing the FluidSolver object
-                self._u.apply(ix, iy, lambda x: x -
+                self._u.apply(ix, iy, lambda cur_val: cur_val -
                               coefficient*self._pressure[idx])
-                self._u.apply(ix+1, iy, lambda x: x +
+                self._u.apply(ix+1, iy, lambda cur_val: cur_val +
                               coefficient*self._pressure[idx])
-                self._u.apply(ix, iy, lambda x: x -
+                self._v.apply(ix, iy, lambda cur_val: cur_val -
                               coefficient*self._pressure[idx])
-                self._u.apply(ix, iy+1, lambda x: x +
+                self._v.apply(ix, iy+1, lambda cur_val: cur_val +
                               coefficient*self._pressure[idx])
                 idx += 1
 
@@ -233,6 +251,27 @@ class BaselineFluidSolver:
         self._u.swap()
         self._v.swap()
 
+    def set_condition(self, conditions):
+        """Sets the condition of the simulation environment.
+
+        It's hard to make this general... Right now hard coding this.
+        """
+        def extract_parts(key_value):
+            return key_value['block'][0:2], key_value['block'][2:4], key_value['func']
+
+        for _, key in enumerate(self._quantites):
+            if key in conditions:
+                top_left, bot_right, func = extract_parts(conditions[key])
+                self._quantites[key].apply_block(top_left, bot_right, func)
+
+        if 'u' in conditions:
+            top_left, bot_right, func = extract_parts(conditions['u'])
+            self._u.apply_block(top_left, bot_right, func)
+
+        if 'v' in conditions:
+            top_left, bot_right, func = extract_parts(conditions['v'])
+            self._u.apply_block(top_left, bot_right, func)
+
 
 def main():
     """Runs simulation
@@ -243,16 +282,67 @@ def main():
     # Here is empirically, as long as it's small enough, it is ok.
     TIMESTEP = 0.005
     MAX_TIME = 8
-    N_STEPS = TIMESTEP // MAX_TIME
+    N_STEPS = (int)(MAX_TIME/TIMESTEP)
+    PRINT_EVERY = 4
 
-    frame = np.zeros((SIZE_X, SIZE_Y), dtype=np.int8)
+    # A buffer that stores a RGB PNG image to be outputted
+    pixels = np.zeros((SIZE_X, SIZE_Y, 3), dtype=np.uint8)
 
     fluid_quantities = {
         'particle_density': FluidQuantity(
             size=(SIZE_X, SIZE_Y), offset=(0.5, 0.5), dx=1/min(SIZE_X, SIZE_Y))
     }
+
+    def unsigned_set_func_wrapper(target_val):
+        """Returns a function f: (cur_val) -> target_val"""
+        def wrapped(cur_val):
+            """Returns target_val is target_val is larger"""
+            if abs(cur_val) < abs(target_val):
+                return target_val
+            else:
+                return cur_val
+        return wrapped
+
+    conditions = {
+        'particle_density': {
+            'block': (0.45, 0.2, 0.55, 0.21),
+            'func': unsigned_set_func_wrapper(1.0)
+        },
+        'u': {
+            'block': (0.45, 0.2, 0.55, 0.21),
+            'func': unsigned_set_func_wrapper(0.0)
+        },
+        'v': {
+            'block': (0.45, 0.2, 0.55, 0.21),
+            'func': unsigned_set_func_wrapper(3.0)
+        }
+    }
+
     fluid_solver = BaselineFluidSolver(
-        size=(SIZE_X, SIZE_Y), fluid_density=FLUID_DENSITY, fluid_quantities=fluid_quantities)
+        size=(SIZE_X, SIZE_Y), fluid_density=FLUID_DENSITY,
+        fluid_quantities=fluid_quantities)
+
+    def print_image(particle_density, image, filename):
+        """Outputs a PNG using particle_density FluidQuantity"""
+
+        size = image.shape[0:2]
+        shade = (1 - particle_density._val.reshape(size)).astype('uint8')*255
+        image[:, :, 0] = shade
+        image[:, :, 1] = shade
+        image[:, :, 2] = shade
+
+        im = Image.fromarray(image)
+        im.save(filename, 'PNG', quality=100)
+
+    img_index = 0
+    for step in range(N_STEPS):
+        fluid_solver.set_condition(conditions)
+        fluid_solver.step(TIMESTEP)
+
+        if step % PRINT_EVERY == 0:
+            print_image(fluid_quantities['particle_density'],
+                        pixels, 'frame{:05d}.png'.format(img_index))
+            img_index += 1
 
 
 if __name__ == '__main__':
