@@ -154,7 +154,7 @@ class BaselineFluidSolver:
         """Eq. (4.11) and (4.13)
         This construction is trivially parallizable, no reason to do it in a loop
         """
-        coefficient = np.float64(1) / self._dx
+        coefficient = 1 / self._dx
 
         i = 0
         for iy in range(self._h):
@@ -171,14 +171,14 @@ class BaselineFluidSolver:
 
         This methods implements a Gauss-Seidel solver, mostly for ease of implementation
         """
-        coefficient = np.float64(timestep) / (self._rho * self._dx * self._dx)
+        coefficient = timestep / (self._rho * self._dx * self._dx)
 
         for cur_iter in range(max_iter):
-            max_error = np.float64(0)
+            max_error = 0
             for iy in range(self._h):
                 for ix in range(self._w):
                     idx = ix + iy*self._w
-                    diag, off_diag = np.float64(0), np.float64(0)
+                    diag, off_diag = 0, 0
 
                     # Boundary checking
                     if ix > 0:
