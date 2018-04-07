@@ -3,10 +3,11 @@ This work is based off of Bridson's "Fluid Simulation", SIGGRAPH 2007 Notes.
 https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf
 """
 
-import math
 import numpy as np
+import time
 
 from PIL import Image
+from utils import timeSince
 
 
 class FluidQuantity:
@@ -337,14 +338,18 @@ def main():
         im.save(filename, 'PNG', quality=100)
 
     img_index = 0
-    for step in range(N_STEPS):
+    start_time = time.time()
+    for step in range(1, N_STEPS+1):
         fluid_solver.set_condition(conditions)
         fluid_solver.step(TIMESTEP)
 
         if step % PRINT_EVERY == 0:
             print_image(fluid_quantities['particle_density'],
-                        pixels, 'frame{:05d}.png'.format(img_index))
+                        pixels, 'output/frame{:05d}.png'.format(img_index))
             img_index += 1
+
+        print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
+                                step, step / N_STEPS * 100))
 
 
 if __name__ == '__main__':
