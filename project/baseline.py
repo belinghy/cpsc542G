@@ -129,7 +129,7 @@ class BaselineFluidSolver:
 
         # Fluid quantities
         # _u, _v are the x, y velocities on the border of a grid
-        self._quantites = fluid_quantities
+        self._quantities = fluid_quantities
         self._u = FluidQuantity(size=(self._w+1, self._h),
                                 offset=(0.0, 0.5), dx=_dx)
         self._v = FluidQuantity(size=(self._w, self._h+1),
@@ -153,7 +153,7 @@ class BaselineFluidSolver:
         """Eq. (4.11) and (4.13)
         This construction is trivially parallizable, no reason to do it in a loop
         """
-        coefficient = 1 / self._dx
+        coefficient = np.float64(1) / self._dx
 
         i = 0
         for iy in range(self._h):
@@ -170,15 +170,14 @@ class BaselineFluidSolver:
 
         This methods implements a Gauss-Seidel solver, mostly for ease of implementation
         """
-        coefficient = timestep / (self._rho * self._dx * self._dx)
+        coefficient = np.float64(timestep) / (self._rho * self._dx * self._dx)
 
-        max_error = 0
         for cur_iter in range(max_iter):
-            max_error = 0
+            max_error = np.float64(0)
             for iy in range(self._h):
                 for ix in range(self._w):
                     idx = ix + iy*self._w
-                    diag, off_diag = 0, 0
+                    diag, off_diag = np.float64(0), np.float64(0)
 
                     # Boundary checking
                     if ix > 0:
@@ -187,10 +186,10 @@ class BaselineFluidSolver:
                     if iy > 0:
                         diag += coefficient
                         off_diag -= coefficient * self._pressure[idx-self._w]
-                    if ix + 1 < self._w:
+                    if ix < self._w - 1:
                         diag += coefficient
                         off_diag -= coefficient * self._pressure[idx+1]
-                    if iy + 1 < self._h:
+                    if iy < self._h - 1:
                         diag += coefficient
                         off_diag -= coefficient * self._pressure[idx+self._w]
 
@@ -232,22 +231,24 @@ class BaselineFluidSolver:
         # Set boundary back to 0
         for iy in range(self._h):
             self._u.apply(0, iy, lambda x: 0)
+            self._u.apply(self._w, iy, lambda x: 0)
         for ix in range(self._w):
             self._v.apply(ix, 0, lambda x: 0)
+            self._v.apply(ix, self._h, lambda x: 0)
 
     def advect(self, timestep):
         """Calculate fluid quantity values at the next time step.
         """
         # Advect all quantities
-        for _, key in enumerate(self._quantites):
-            self._quantites[key].advect(timestep, self._u, self._v)
+        for _, key in enumerate(self._quantities):
+            self._quantities[key].advect(timestep, self._u, self._v)
         # Advect u and v themselves
         self._u.advect(timestep, self._u, self._v)
         self._v.advect(timestep, self._u, self._v)
 
         # Swap _val[] and _buf[] to commit result of advection
-        for _, key in enumerate(self._quantites):
-            self._quantites[key].swap()
+        for _, key in enumerate(self._quantities):
+            self._quantities[key].swap()
         self._u.swap()
         self._v.swap()
 
@@ -259,10 +260,10 @@ class BaselineFluidSolver:
         def extract_parts(key_value):
             return key_value['block'][0:2], key_value['block'][2:4], key_value['func']
 
-        for _, key in enumerate(self._quantites):
+        for _, key in enumerate(self._quantities):
             if key in conditions:
                 top_left, bot_right, func = extract_parts(conditions[key])
-                self._quantites[key].apply_block(top_left, bot_right, func)
+                self._quantities[key].apply_block(top_left, bot_right, func)
 
         if 'u' in conditions:
             top_left, bot_right, func = extract_parts(conditions['u'])
@@ -270,7 +271,7 @@ class BaselineFluidSolver:
 
         if 'v' in conditions:
             top_left, bot_right, func = extract_parts(conditions['v'])
-            self._u.apply_block(top_left, bot_right, func)
+            self._v.apply_block(top_left, bot_right, func)
 
 
 def main():
@@ -326,7 +327,8 @@ def main():
         """Outputs a PNG using particle_density FluidQuantity"""
 
         size = image.shape[0:2]
-        shade = (1 - particle_density._val.reshape(size)).astype('uint8')*255
+        shade = ((1 - particle_density._val.reshape(size))
+                 * 255.0).astype('uint8')
         image[:, :, 0] = shade
         image[:, :, 1] = shade
         image[:, :, 2] = shade
