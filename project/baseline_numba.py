@@ -8,7 +8,6 @@ import time
 import numpy as np
 from numba import float64, jit, uint32, void
 import matplotlib.pyplot as plt
-import matplotlib.animation as animation
 from PIL import Image
 
 from utils import timeSince
@@ -452,7 +451,7 @@ class BaselineFluidSolver:
         """Sets the condition of the simulation environment.
         """
         # Source 1
-        pt1, pt2 = [0.45, 0.20], [0.60, 0.23]
+        pt1, pt2 = [0.20, 0.20], [0.35, 0.23]
         _set_block(self._p._val,
                    self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oy,
                    pt1, pt2, 1.0)
@@ -528,14 +527,14 @@ def main():
         fluid_solver.set_condition()
         fluid_solver.step(TIMESTEP)
 
-        if step % PRINT_EVERY == 0:
-            update_image(fluid_solver._p, pixels)
+        update_image(fluid_solver._p, pixels)
 
+        # Realtime plotting
+        update_frame(im, pixels)
+
+        if step % PRINT_EVERY == 0:
             # Uncomment to output PNG
             # save_image(pixels, 'output/frame{:05d}.png'.format(img_index))
-
-            # Realtime plotting
-            update_frame(im, pixels)
             img_index += 1
 
         print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
