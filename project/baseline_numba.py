@@ -210,7 +210,7 @@ def _mac_interpolate(x, y, w, ww, wh, wox, woy):
 def _mac_cubic_interpolate(x, y, w, ww, wh, wox, woy):
     """Cubic Catmull-Rom spline
 
-    Section 5.2 points out that 
+    Section 5.2 recommends using such interpolation scheme.
     """
     # Boundary checking
     x = min(max(x - wox, 0.0), ww - 1.001)
@@ -275,6 +275,7 @@ def _advect(w, wbuf,
             # Classic RK4
             # The notes does not say which to use, but recommend against
             # using forward euler.  Says at least RK2, or modified euler
+            # for anything involving a rotation.
             K1u = _mac_interpolate(x, y, u, uw, uh, uox, uoy) / wdx
             K1v = _mac_interpolate(x, y, v, vw, vh, vox, voy) / wdx
             x2 = x - 0.5 * timestep * K1u
@@ -318,18 +319,6 @@ class FluidQuantity:
         self._val = np.zeros(self._w*self._h, dtype=np.float64)
         self._buf = np.zeros(self._w*self._h, dtype=np.float64)
 
-    def at(self, x, y):
-        """Returns value of self at coordinates (x, y) integeres
-        """
-        return self._val[x + y*self._w]
-
-    def apply(self, x, y, f):
-        """
-        Apply function f to value at (x, y).
-        f(x) the first argument is the current value at (x, y).
-        """
-        self._val[x + y*self._w] = f(self._val[x + y*self._w])
-
     def swap(self):
         """Performance hack for calculation advect()
         """
@@ -344,30 +333,6 @@ class FluidQuantity:
                 u._val, u._w, u._h, u._ox, u._oy,
                 v._val, v._w, v._h, v._ox, v._oy)
 
-    def linear_interpolate(self, x, y):
-        """2D linear interpolate the quantity values at (x, y) from four
-        near by grid points.
-        """
-        # Boundary checking
-        x = min(max(x - self._ox, 0.0), self._w - 1.001)
-        y = min(max(y - self._oy, 0.0), self._h - 1.001)
-        # Extract integer and fractional parts
-        ix = (int)(x)
-        iy = (int)(y)
-        x -= ix
-        y -= iy
-
-        x00 = self.at(ix+0, iy+0)
-        x10 = self.at(ix+1, iy+0)
-        x01 = self.at(ix+0, iy+1)
-        x11 = self.at(ix+1, iy+1)
-
-        def lerp(a, b, x):
-            """Simple 1D linear interpolation formula"""
-            return a*(1-x) + b*x
-
-        return lerp(lerp(x00, x10, x), lerp(x01, x11, x), y)
-
 
 class BaselineFluidSolver:
     """ FluidSolver implements a semi-lagrangian method for solving
@@ -377,7 +342,7 @@ class BaselineFluidSolver:
     for solving the pressure equation.
     """
 
-    def __init__(self, size, fluid_density):
+    def __init__(self, size, rho):
         """
         fluid_quantities is a list of quantities to advect
         """
@@ -386,7 +351,7 @@ class BaselineFluidSolver:
         self._w = size[0]
         self._h = size[1]
         self._dx = _dx
-        self._rho = fluid_density
+        self._rho = rho
 
         # Fluid quantities
         # _u, _v are the x, y velocities on the border of a grid
@@ -490,12 +455,13 @@ def main():
     MAX_TIME = 8
     N_STEPS = (int)(MAX_TIME/TIMESTEP)
     PRINT_EVERY = 4
+    UPDATE_EVERY = 4
 
     # A buffer that stores a RGB PNG image to be outputted
     pixels = np.zeros((SIZE_X, SIZE_Y, 3), dtype=np.uint8)
 
     fluid_solver = BaselineFluidSolver(
-        size=(SIZE_X, SIZE_Y), fluid_density=FLUID_DENSITY)
+        size=(SIZE_X, SIZE_Y), rho=FLUID_DENSITY)
 
     def update_image(particle_density, image):
         """Update image using particle_density"""
@@ -514,7 +480,7 @@ def main():
 
     def update_frame(im, image):
         """Update animation frame"""
-        im.set_array(pixels)
+        im.set_array(image)
         plt.draw()
         plt.pause(0.01)
 
@@ -527,10 +493,10 @@ def main():
         fluid_solver.set_condition()
         fluid_solver.step(TIMESTEP)
 
-        update_image(fluid_solver._p, pixels)
-
-        # Realtime plotting
-        update_frame(im, pixels)
+        if step % UPDATE_EVERY == 0:
+            update_image(fluid_solver._p, pixels)
+            # Realtime plotting
+            update_frame(im, pixels)
 
         if step % PRINT_EVERY == 0:
             # Uncomment to output PNG
