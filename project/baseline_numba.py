@@ -7,9 +7,49 @@ import time
 
 import numpy as np
 from numba import float64, jit, uint32, void
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
 from PIL import Image
 
 from utils import timeSince
+
+
+@jit(float64(float64, float64))
+def rootsumsquare(x, y):
+    """Returns the sqrt of 2-norm"""
+    return (x**2 + y**2)**(1.0/2.0)
+
+
+@jit(float64(float64))
+def smooth(x):
+    """Accept range between 0 and 1, and returns tapered values"""
+    x = min(abs(x), 1.0)
+    return 1.0 - 3.0*(x**2) + 2.0*(x**3)
+
+
+@jit(float64(float64, float64, float64))
+def two_point_interpolate(a, b, x):
+    """Simple linear interpolation"""
+    return a*(1-x) + b*x
+
+
+@jit(float64(float64, float64, float64, float64, float64))
+def four_point_interpolate(a, b, c, d, x):
+    """Cubic spline, in particular Catmull-Rom Spline"""
+    square = x ** 2
+    cube = x ** 3
+
+    minimum = min(a, b, c, d)
+    maximum = max(a, b, c, d)
+
+    # This equation is obtained from
+    # https://en.wikipedia.org/wiki/Cubic_Hermite_spline
+    value = a*(0.0 - 0.5*x + 1.0*square - 0.5*cube) \
+        + b*(1.0 + 0.0*x - 2.5*square + 1.5*cube) \
+        + c*(0.0 + 0.5*x + 2.0*square - 1.5*cube) \
+        + d*(0.0 + 0.0*x - 0.5*square + 0.5*cube)
+
+    return min(max(value, minimum), maximum)
 
 
 @jit(void(float64[:],
@@ -24,14 +64,21 @@ def _set_block(v, vw, vh, vdx, vox, voy, top_left, bot_right, value):
     bot_right: (x1, y1)
     f: ()
     """
-    ix0 = int(top_left[0]/vdx - vox)
-    iy0 = int(top_left[1]/vdx - voy)
-    ix1 = int(bot_right[0]/vdx - vox)
-    iy1 = int(bot_right[1]/vdx - voy)
+    x0, y0 = top_left[0], top_left[1]
+    x1, y1 = bot_right[0], bot_right[1]
+
+    ix0, iy0 = int(x0/vdx - vox), int(y0/vdx - voy)
+    ix1, iy1 = int(x1/vdx - vox), int(y1/vdx - voy)
 
     for iy in range(max(iy0, 0), min(iy1, vh)):
         for ix in range(max(ix0, 0), min(ix1, vw)):
-            v[ix+iy*vw] = value
+            length = rootsumsquare(
+                (2*(ix + 0.5)*vdx - (x0+x1)) / (x1-x0),
+                (2*(iy + 0.5)*vdx - (y0+y1)) / (y1-y0)
+            )
+            smoothed_val = smooth(length)*value
+            if abs(v[ix+iy*vw]) < abs(smoothed_val):
+                v[ix+iy*vw] = smoothed_val
 
 
 @jit(void(float64[:],
@@ -134,17 +181,11 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
         v[ix+h*vw] = 0
 
 
-@jit(float64(float64, float64, float64))
-def two_point_interpolate(a, b, x):
-    """Simple linear interpolation"""
-    return a*(1-x) + b*x
-
-
 @jit(float64(float64, float64,
              float64[:], uint32, uint32, float64, float64))
-def _mac_grid_interpolate(x, y, w, ww, wh, wox, woy):
-    """2D linear interpolate the quantity values at (x, y) from four
-    near by grid points.
+def _mac_interpolate(x, y, w, ww, wh, wox, woy):
+    """2D linear MAC grid interpolate the quantity values at (x, y)
+    from four near by grid points.
     """
     # Boundary checking
     x = min(max(x - wox, 0.0), ww - 1.001)
@@ -163,6 +204,45 @@ def _mac_grid_interpolate(x, y, w, ww, wh, wox, woy):
     return two_point_interpolate(
         two_point_interpolate(x00, x10, x),
         two_point_interpolate(x01, x11, x), y)
+
+
+@jit(float64(float64, float64,
+             float64[:], uint32, uint32, float64, float64))
+def _mac_cubic_interpolate(x, y, w, ww, wh, wox, woy):
+    """Cubic Catmull-Rom spline
+
+    Section 5.2 points out that 
+    """
+    # Boundary checking
+    x = min(max(x - wox, 0.0), ww - 1.001)
+    y = min(max(y - woy, 0.0), wh - 1.001)
+    # Extract integer and fractional parts
+    ix = int(x)
+    iy = int(y)
+    x -= ix
+    y -= iy
+
+    x0, x1, x2, x3 = max(ix-1, 0), ix, ix+1, min(ix+2, ww-1)
+    y0, y1, y2, y3 = max(iy-1, 0), iy, iy+1, min(iy+2, wh-1)
+
+    w00, w10, w20, w30 = w[(x0)+(y0)*ww], w[(x1)+(y0)*ww], \
+        w[(x2)+(y0)*ww], w[(x3)+(y0)*ww]
+
+    w01, w11, w21, w31 = w[(x0)+(y1)*ww], w[(x1)+(y1)*ww], \
+        w[(x2)+(y1)*ww], w[(x3)+(y1)*ww]
+
+    w02, w12, w22, w32 = w[(x0)+(y2)*ww], w[(x1)+(y2)*ww], \
+        w[(x2)+(y2)*ww], w[(x3)+(y2)*ww]
+
+    w03, w13, w23, w33 = w[(x0)+(y3)*ww], w[(x1)+(y3)*ww], \
+        w[(x2)+(y3)*ww], w[(x3)+(y3)*ww]
+
+    t0 = four_point_interpolate(w00, w10, w20, w30, x)
+    t1 = four_point_interpolate(w01, w11, w21, w31, x)
+    t2 = four_point_interpolate(w02, w12, w22, w32, x)
+    t3 = four_point_interpolate(w03, w13, w23, w33, x)
+
+    return four_point_interpolate(t0, t1, t2, t3, y)
 
 
 @jit(float64(float64[:], float64[:],
@@ -188,17 +268,40 @@ def _advect(w, wbuf,
 
             # Forward Euler method
             # Divide by dx because we want an index value
-            x -= _mac_grid_interpolate(x, y, u, uw,
-                                       uh, uox, uoy) * timestep / wdx
-            y -= _mac_grid_interpolate(x, y, v, vw,
-                                       vh, vox, voy) * timestep / wdx
+            # x -= _mac_interpolate(x, y, u, uw,
+            #                       uh, uox, uoy) * timestep / wdx
+            # y -= _mac_interpolate(x, y, v, vw,
+            #                       vh, vox, voy) * timestep / wdx
+
+            # Classic RK4
+            # The notes does not say which to use, but recommend against
+            # using forward euler.  Says at least RK2, or modified euler
+            K1u = _mac_interpolate(x, y, u, uw, uh, uox, uoy) / wdx
+            K1v = _mac_interpolate(x, y, v, vw, vh, vox, voy) / wdx
+            x2 = x - 0.5 * timestep * K1u
+            y2 = y - 0.5 * timestep * K1v
+
+            K2u = _mac_interpolate(x2, y2, u, uw, uh, uox, uoy) / wdx
+            K2v = _mac_interpolate(x2, y2, v, vw, vh, vox, voy) / wdx
+            x3 = x2 - 0.5 * timestep * K2u
+            y3 = y2 - 0.5 * timestep * K2v
+
+            K3u = _mac_interpolate(x3, y3, u, uw, uh, uox, uoy) / wdx
+            K3v = _mac_interpolate(x3, y3, v, vw, vh, vox, voy) / wdx
+            x4 = x3 - timestep * K3u
+            y4 = y3 - timestep * K3v
+
+            K4u = _mac_interpolate(x4, y4, u, uw, uh, uox, uoy) / wdx
+            K4v = _mac_interpolate(x4, y4, v, vw, vh, vox, voy) / wdx
+            x -= timestep * ((1/6)*K1u + (2/6)*K2u + (2/6)*K3u + (1/6)*K4u)
+            y -= timestep * ((1/6)*K1v + (2/6)*K2v + (2/6)*K3v + (1/6)*K4v)
 
             # We now know the value at the next time step should be
             # the old value at (x, y), however this might not be perfectly
             # on a grid point, so we interpolate again.
             # Writing to buf[] because we still need to use the old values
             # to advect other quantities.
-            wbuf[idx] = _mac_grid_interpolate(x, y, w, ww, wh, wox, woy)
+            wbuf[idx] = _mac_cubic_interpolate(x, y, w, ww, wh, wox, woy)
             idx += 1
 
 
@@ -348,32 +451,33 @@ class BaselineFluidSolver:
     def set_condition(self):
         """Sets the condition of the simulation environment.
         """
-
         # Source 1
+        pt1, pt2 = [0.45, 0.20], [0.60, 0.23]
         _set_block(self._p._val,
                    self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oy,
-                   [0.20, 0.2], [0.30, 0.21], 1.0)
+                   pt1, pt2, 1.0)
 
         _set_block(self._u._val,
                    self._u._w, self._u._h, self._u._dx, self._u._ox, self._u._oy,
-                   [0.20, 0.2], [0.30, 0.21], 0.0)
+                   pt1, pt2, 0.0)
 
         _set_block(self._v._val,
                    self._v._w, self._v._h, self._v._dx, self._v._ox, self._v._oy,
-                   [0.20, 0.2], [0.30, 0.21], 3.0)
+                   pt1, pt2, 3.0)
 
         # Source 2
+        pt1, pt2 = [0.70, 0.70], [0.85, 0.73]
         _set_block(self._p._val,
                    self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oy,
-                   [0.70, 0.2], [0.80, 0.21], 1.0)
+                   pt1, pt2, 1.0)
 
         _set_block(self._u._val,
                    self._u._w, self._u._h, self._u._dx, self._u._ox, self._u._oy,
-                   [0.70, 0.2], [0.80, 0.21], 0.0)
+                   pt1, pt2, 0.0)
 
         _set_block(self._v._val,
                    self._v._w, self._v._h, self._v._dx, self._v._ox, self._v._oy,
-                   [0.70, 0.2], [0.80, 0.21], 3.0)
+                   pt1, pt2, 3.0)
 
 
 def main():
@@ -394,8 +498,8 @@ def main():
     fluid_solver = BaselineFluidSolver(
         size=(SIZE_X, SIZE_Y), fluid_density=FLUID_DENSITY)
 
-    def print_image(particle_density, image, filename):
-        """Outputs a PNG using particle_density FluidQuantity"""
+    def update_image(particle_density, image):
+        """Update image using particle_density"""
 
         size = image.shape[0:2]
         shade = ((1 - particle_density._val.reshape(size))
@@ -404,8 +508,19 @@ def main():
         image[:, :, 1] = shade
         image[:, :, 2] = shade
 
+    def save_image(image, filename):
+        """Save image"""
         im = Image.fromarray(image)
         im.save(filename, 'PNG', quality=100)
+
+    def update_frame(im, image):
+        """Update animation frame"""
+        im.set_array(pixels)
+        plt.draw()
+        plt.pause(0.01)
+
+    fig = plt.figure()
+    im = plt.imshow(pixels, animated=True)
 
     img_index = 0
     start_time = time.time()
@@ -414,8 +529,13 @@ def main():
         fluid_solver.step(TIMESTEP)
 
         if step % PRINT_EVERY == 0:
-            print_image(fluid_solver._p,
-                        pixels, 'output/frame{:05d}.png'.format(img_index))
+            update_image(fluid_solver._p, pixels)
+
+            # Uncomment to output PNG
+            # save_image(pixels, 'output/frame{:05d}.png'.format(img_index))
+
+            # Realtime plotting
+            update_frame(im, pixels)
             img_index += 1
 
         print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
