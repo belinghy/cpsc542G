@@ -103,7 +103,7 @@ def _calc_neg_div(neg_div, u, uw, v, vw, w, h, dx):
                 uint32, uint32, float64,
                 float64, float64,
                 float64, uint32), nopython=True)
-def _project(pressure, neg_div, w, h, dx, rho, timestep, tol=1e-5, max_iter=600):
+def _calc_pressure(pressure, neg_div, w, h, dx, rho, timestep, tol=1e-5, max_iter=600):
     """Eq. (4.19) Calculate pressure from divergence
 
     The pressure equation is a standard Laplacian, conjugate gradient is the method
@@ -155,7 +155,7 @@ def _project(pressure, neg_div, w, h, dx, rho, timestep, tol=1e-5, max_iter=600)
 def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
     """Equation (4.4) and (4.5)
 
-    Pressure should be updated using project(), now we calculate fluid velocities,
+    Pressure should be updated using calc_pressure(), now we calculate fluid velocities,
     to make the fluid incompressible.
     """
     coefficient = timestep / (rho * dx)
@@ -163,7 +163,6 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
     idx = 0
     for iy in range(h):
         for ix in range(w):
-            # self in lambda is referencing the FluidSolver object
             diff = coefficient * pressure[idx]
             u[ix+iy*uw] -= diff
             u[(ix+1)+iy*uw] += diff
@@ -172,6 +171,7 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
             idx += 1
 
     # Set boundary back to 0
+    # No fluid flows in or out of boundary
     for iy in range(h):
         u[0+iy*uw] = 0
         u[w+iy*uw] = 0
@@ -372,8 +372,10 @@ class BaselineFluidSolver:
         """
         # Calc and store negative divergence in buffer
         self.calc_neg_div()
-        self.project(timestep)
+        # Below two are project() in the notes
+        self.calc_pressure(timestep)
         self.make_incompressible(timestep)
+        # Advect all quantities
         self.advect(timestep)
 
     def calc_neg_div(self):
@@ -383,11 +385,11 @@ class BaselineFluidSolver:
                       self._v._val, self._v._w,
                       self._w, self._h, self._dx)
 
-    def project(self, timestep, tol=1e-5, max_iter=600):
+    def calc_pressure(self, timestep, tol=1e-5, max_iter=1000):
         """ Docs in kernel function"""
-        iters, error = _project(self._pressure, self._neg_div, self._w, self._h,
-                                self._dx, self._rho, timestep, tol, max_iter)
-        print('Project finished in %d iterations, final error is %g' %
+        iters, error = _calc_pressure(self._pressure, self._neg_div, self._w, self._h,
+                                      self._dx, self._rho, timestep, tol, max_iter)
+        print('Calc_pressure() finished in %d iterations, final error is %g' %
               (iters, error))
 
     def make_incompressible(self, timestep):
@@ -448,7 +450,7 @@ def main():
     """Runs simulation
     """
     SIZE_X, SIZE_Y = 128, 128
-    FLUID_DENSITY = 0.1
+    FLUID_DENSITY = 1
     # Section 3.2 discusses how to set this in some detail. Related by CFL condition
     # Here is empirically, as long as it's small enough, it is ok.
     TIMESTEP = 0.005
