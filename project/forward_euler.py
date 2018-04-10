@@ -268,34 +268,34 @@ def _advect(w, wbuf,
 
             # Forward Euler method
             # Divide by dx because we want an index value
-            # x -= _mac_interpolate(x, y, u, uw,
-            #                       uh, uox, uoy) * timestep / wdx
-            # y -= _mac_interpolate(x, y, v, vw,
-            #                       vh, vox, voy) * timestep / wdx
+            x -= _mac_interpolate(x, y, u, uw,
+                                  uh, uox, uoy) * timestep / wdx
+            y -= _mac_interpolate(x, y, v, vw,
+                                  vh, vox, voy) * timestep / wdx
 
             # Classic RK4
             # The notes does not say which to use, but recommend against
             # using forward euler.  Says at least RK2, or modified euler
             # for anything involving a rotation.
-            K1u = _mac_interpolate(x, y, u, uw, uh, uox, uoy) / wdx
-            K1v = _mac_interpolate(x, y, v, vw, vh, vox, voy) / wdx
-            x2 = x - 0.5 * timestep * K1u
-            y2 = y - 0.5 * timestep * K1v
+            # K1u = _mac_interpolate(x, y, u, uw, uh, uox, uoy) / wdx
+            # K1v = _mac_interpolate(x, y, v, vw, vh, vox, voy) / wdx
+            # x2 = x - 0.5 * timestep * K1u
+            # y2 = y - 0.5 * timestep * K1v
 
-            K2u = _mac_interpolate(x2, y2, u, uw, uh, uox, uoy) / wdx
-            K2v = _mac_interpolate(x2, y2, v, vw, vh, vox, voy) / wdx
-            x3 = x2 - 0.5 * timestep * K2u
-            y3 = y2 - 0.5 * timestep * K2v
+            # K2u = _mac_interpolate(x2, y2, u, uw, uh, uox, uoy) / wdx
+            # K2v = _mac_interpolate(x2, y2, v, vw, vh, vox, voy) / wdx
+            # x3 = x2 - 0.5 * timestep * K2u
+            # y3 = y2 - 0.5 * timestep * K2v
 
-            K3u = _mac_interpolate(x3, y3, u, uw, uh, uox, uoy) / wdx
-            K3v = _mac_interpolate(x3, y3, v, vw, vh, vox, voy) / wdx
-            x4 = x3 - timestep * K3u
-            y4 = y3 - timestep * K3v
+            # K3u = _mac_interpolate(x3, y3, u, uw, uh, uox, uoy) / wdx
+            # K3v = _mac_interpolate(x3, y3, v, vw, vh, vox, voy) / wdx
+            # x4 = x3 - timestep * K3u
+            # y4 = y3 - timestep * K3v
 
-            K4u = _mac_interpolate(x4, y4, u, uw, uh, uox, uoy) / wdx
-            K4v = _mac_interpolate(x4, y4, v, vw, vh, vox, voy) / wdx
-            x -= timestep * ((1/6)*K1u + (2/6)*K2u + (2/6)*K3u + (1/6)*K4u)
-            y -= timestep * ((1/6)*K1v + (2/6)*K2v + (2/6)*K3v + (1/6)*K4v)
+            # K4u = _mac_interpolate(x4, y4, u, uw, uh, uox, uoy) / wdx
+            # K4v = _mac_interpolate(x4, y4, v, vw, vh, vox, voy) / wdx
+            # x -= timestep * ((1/6)*K1u + (2/6)*K2u + (2/6)*K3u + (1/6)*K4u)
+            # y -= timestep * ((1/6)*K1v + (2/6)*K2v + (2/6)*K3v + (1/6)*K4v)
 
             # We now know the value at the next time step should be
             # the old value at (x, y), however this might not be perfectly
@@ -507,7 +507,7 @@ def main():
             img_index += 1
 
         if step == 230:
-            save_image(pixels, 'rk4.png')
+            save_image(pixels, 'forward-euler.png')
 
         print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
                                 step, step / N_STEPS * 100))
