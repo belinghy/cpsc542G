@@ -56,29 +56,29 @@ def four_point_interpolate(a, b, c, d, x):
           float64, float64, float64, float64, float64,
           float64[:], float64[:],
           float64))
-def _set_block(v, vw, vh, vdx, vox, voy, top_left, bot_right, value):
+def _set_block(v, vw, vh, vdx, vox, voz, top_left, bot_right, value):
     """Sets the fluid quantity within top_left and bot_right rectangle
     to have value returned by f.
 
-    top_left: (x0, y0)
-    bot_right: (x1, y1)
+    top_left: (x0, z0)
+    bot_right: (x1, z1)
     f: ()
     """
-    x0, y0 = top_left[0], top_left[1]
-    x1, y1 = bot_right[0], bot_right[1]
+    x0, z0 = top_left[0], top_left[1]
+    x1, z1 = bot_right[0], bot_right[1]
 
-    ix0, iy0 = int(x0/vdx - vox), int(y0/vdx - voy)
-    ix1, iy1 = int(x1/vdx - vox), int(y1/vdx - voy)
+    ix0, iz0 = int(x0/vdx - vox), int(z0/vdx - voz)
+    ix1, iz1 = int(x1/vdx - vox), int(z1/vdx - voz)
 
-    for iy in range(max(iy0, 0), min(iy1, vh)):
+    for iz in range(max(iz0, 0), min(iz1, vh)):
         for ix in range(max(ix0, 0), min(ix1, vw)):
             length = rootsumsquare(
                 (2*(ix + 0.5)*vdx - (x0+x1)) / (x1-x0),
-                (2*(iy + 0.5)*vdx - (y0+y1)) / (y1-y0)
+                (2*(iz + 0.5)*vdx - (z0+z1)) / (z1-z0)
             )
             smoothed_val = smooth(length)*value
-            if abs(v[ix+iy*vw]) < abs(smoothed_val):
-                v[ix+iy*vw] = smoothed_val
+            if abs(v[ix+iz*vw]) < abs(smoothed_val):
+                v[ix+iz*vw] = smoothed_val
 
 
 @jit(void(float64[:],
@@ -92,11 +92,11 @@ def _calc_neg_div(neg_div, u, uw, v, vw, w, h, dx):
     coefficient = 1 / dx
 
     idx = 0
-    for iy in range(h):
+    for iz in range(h):
         for ix in range(w):
             neg_div[idx] = -coefficient * (
-                u[(ix+1)+iy*uw] - u[ix+iy*uw] +
-                v[ix+(iy+1)*vw] - v[ix+iy*vw])
+                u[(ix+1)+iz*uw] - u[ix+iz*uw] +
+                v[ix+(iz+1)*vw] - v[ix+iz*vw])
             idx += 1
 
 
@@ -118,22 +118,22 @@ def _calc_pressure(pressure, neg_div, w, h, dx, rho, timestep, tol=1e-5, max_ite
 
     for cur_iter in range(max_iter):
         max_error = 0
-        for iy in range(h):
+        for iz in range(h):
             for ix in range(w):
-                idx = ix + iy*w
+                idx = ix + iz*w
                 diag, off_diag = 0, 0
 
                 # Boundary checking
                 if ix > 0:
                     diag += coefficient
                     off_diag -= coefficient * pressure[idx-1]
-                if iy > 0:
+                if iz > 0:
                     diag += coefficient
                     off_diag -= coefficient * pressure[idx-w]
                 if ix < w - 1:
                     diag += coefficient
                     off_diag -= coefficient * pressure[idx+1]
-                if iy < h - 1:
+                if iz < h - 1:
                     diag += coefficient
                     off_diag -= coefficient * pressure[idx+w]
 
@@ -162,20 +162,20 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
     coefficient = timestep / (rho * dx)
 
     idx = 0
-    for iy in range(h):
+    for iz in range(h):
         for ix in range(w):
             diff = coefficient * pressure[idx]
-            u[ix+iy*uw] -= diff
-            u[(ix+1)+iy*uw] += diff
-            v[ix+iy*vw] -= diff
-            v[ix+(iy+1)*vw] += diff
+            u[ix+iz*uw] -= diff
+            u[(ix+1)+iz*uw] += diff
+            v[ix+iz*vw] -= diff
+            v[ix+(iz+1)*vw] += diff
             idx += 1
 
     # Set boundary back to 0
     # No fluid flows in or out of boundary
-    for iy in range(h):
-        u[0+iy*uw] = 0
-        u[w+iy*uw] = 0
+    for iz in range(h):
+        u[0+iz*uw] = 0
+        u[w+iz*uw] = 0
     for ix in range(w):
         v[ix+0*vw] = 0
         v[ix+h*vw] = 0
@@ -183,66 +183,66 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
 
 @jit(float64(float64, float64,
              float64[:], uint32, uint32, float64, float64))
-def _mac_interpolate(x, y, w, ww, wh, wox, woy):
-    """2D linear MAC grid interpolate the quantity values at (x, y)
+def _mac_interpolate(x, z, w, ww, wh, wox, woz):
+    """2D linear MAC grid interpolate the quantity values at (x, z)
     from four near by grid points.
     """
     # Boundary checking
     x = min(max(x - wox, 0.0), ww - 1.001)
-    y = min(max(y - woy, 0.0), wh - 1.001)
+    z = min(max(z - woz, 0.0), wh - 1.001)
     # Extract integer and fractional parts
     ix = int(x)
-    iy = int(y)
+    iz = int(z)
     x -= ix
-    y -= iy
+    z -= iz
 
-    x00 = w[(ix+0)+(iy+0)*ww]
-    x10 = w[(ix+1)+(iy+0)*ww]
-    x01 = w[(ix+0)+(iy+1)*ww]
-    x11 = w[(ix+1)+(iy+1)*ww]
+    x00 = w[(ix+0)+(iz+0)*ww]
+    x10 = w[(ix+1)+(iz+0)*ww]
+    x01 = w[(ix+0)+(iz+1)*ww]
+    x11 = w[(ix+1)+(iz+1)*ww]
 
     return two_point_interpolate(
         two_point_interpolate(x00, x10, x),
-        two_point_interpolate(x01, x11, x), y)
+        two_point_interpolate(x01, x11, x), z)
 
 
 @jit(float64(float64, float64,
              float64[:], uint32, uint32, float64, float64))
-def _mac_cubic_interpolate(x, y, w, ww, wh, wox, woy):
+def _mac_cubic_interpolate(x, z, w, ww, wh, wox, woz):
     """Cubic Catmull-Rom spline
 
     Section 5.2 recommends using such interpolation scheme.
     """
     # Boundary checking
     x = min(max(x - wox, 0.0), ww - 1.001)
-    y = min(max(y - woy, 0.0), wh - 1.001)
+    z = min(max(z - woz, 0.0), wh - 1.001)
     # Extract integer and fractional parts
     ix = int(x)
-    iy = int(y)
+    iz = int(z)
     x -= ix
-    y -= iy
+    z -= iz
 
     x0, x1, x2, x3 = max(ix-1, 0), ix, ix+1, min(ix+2, ww-1)
-    y0, y1, y2, y3 = max(iy-1, 0), iy, iy+1, min(iy+2, wh-1)
+    z0, z1, z2, z3 = max(iz-1, 0), iz, iz+1, min(iz+2, wh-1)
 
-    w00, w10, w20, w30 = w[(x0)+(y0)*ww], w[(x1)+(y0)*ww], \
-        w[(x2)+(y0)*ww], w[(x3)+(y0)*ww]
+    w00, w10, w20, w30 = w[(x0)+(z0)*ww], w[(x1)+(z0)*ww], \
+        w[(x2)+(z0)*ww], w[(x3)+(z0)*ww]
 
-    w01, w11, w21, w31 = w[(x0)+(y1)*ww], w[(x1)+(y1)*ww], \
-        w[(x2)+(y1)*ww], w[(x3)+(y1)*ww]
+    w01, w11, w21, w31 = w[(x0)+(z1)*ww], w[(x1)+(z1)*ww], \
+        w[(x2)+(z1)*ww], w[(x3)+(z1)*ww]
 
-    w02, w12, w22, w32 = w[(x0)+(y2)*ww], w[(x1)+(y2)*ww], \
-        w[(x2)+(y2)*ww], w[(x3)+(y2)*ww]
+    w02, w12, w22, w32 = w[(x0)+(z2)*ww], w[(x1)+(z2)*ww], \
+        w[(x2)+(z2)*ww], w[(x3)+(z2)*ww]
 
-    w03, w13, w23, w33 = w[(x0)+(y3)*ww], w[(x1)+(y3)*ww], \
-        w[(x2)+(y3)*ww], w[(x3)+(y3)*ww]
+    w03, w13, w23, w33 = w[(x0)+(z3)*ww], w[(x1)+(z3)*ww], \
+        w[(x2)+(z3)*ww], w[(x3)+(z3)*ww]
 
     t0 = four_point_interpolate(w00, w10, w20, w30, x)
     t1 = four_point_interpolate(w01, w11, w21, w31, x)
     t2 = four_point_interpolate(w02, w12, w22, w32, x)
     t3 = four_point_interpolate(w03, w13, w23, w33, x)
 
-    return four_point_interpolate(t0, t1, t2, t3, y)
+    return four_point_interpolate(t0, t1, t2, t3, z)
 
 
 @jit(float64(float64[:], float64[:],
@@ -251,58 +251,33 @@ def _mac_cubic_interpolate(x, y, w, ww, wh, wox, woy):
              float64[:], uint32, uint32, float64, float64,
              float64[:], uint32, uint32, float64, float64))
 def _advect(w, wbuf,
-            ww, wh, wox, woy, wdx,
+            ww, wh, wox, woz, wdx,
             timestep,
-            u, uw, uh, uox, uoy,
-            v, vw, vh, vox, voy):
+            u, uw, uh, uox, uoz,
+            v, vw, vh, vox, voz):
     """Advect the fluid quantity use velocity fields of u, v
 
     Eq. (3.6) to (3.9).  This is the Lagrangian part of the
     semi-Lagrangian methods.
     """
     idx = 0
-    for iy in range(wh):
+    for iz in range(wh):
         for ix in range(ww):
             x = ix + wox
-            y = iy + woy
+            z = iz + woz
 
-            # Forward Euler method
-            # Divide by dx because we want an index value
-            x -= _mac_interpolate(x, y, u, uw,
-                                  uh, uox, uoy) * timestep / wdx
-            y -= _mac_interpolate(x, y, v, vw,
-                                  vh, vox, voy) * timestep / wdx
-
-            # Classic RK4
-            # The notes does not say which to use, but recommend against
-            # using forward euler.  Says at least RK2, or modified euler
-            # for anything involving a rotation.
-            # K1u = _mac_interpolate(x, y, u, uw, uh, uox, uoy) / wdx
-            # K1v = _mac_interpolate(x, y, v, vw, vh, vox, voy) / wdx
-            # x2 = x - 0.5 * timestep * K1u
-            # y2 = y - 0.5 * timestep * K1v
-
-            # K2u = _mac_interpolate(x2, y2, u, uw, uh, uox, uoy) / wdx
-            # K2v = _mac_interpolate(x2, y2, v, vw, vh, vox, voy) / wdx
-            # x3 = x2 - 0.5 * timestep * K2u
-            # y3 = y2 - 0.5 * timestep * K2v
-
-            # K3u = _mac_interpolate(x3, y3, u, uw, uh, uox, uoy) / wdx
-            # K3v = _mac_interpolate(x3, y3, v, vw, vh, vox, voy) / wdx
-            # x4 = x3 - timestep * K3u
-            # y4 = y3 - timestep * K3v
-
-            # K4u = _mac_interpolate(x4, y4, u, uw, uh, uox, uoy) / wdx
-            # K4v = _mac_interpolate(x4, y4, v, vw, vh, vox, voy) / wdx
-            # x -= timestep * ((1/6)*K1u + (2/6)*K2u + (2/6)*K3u + (1/6)*K4u)
-            # y -= timestep * ((1/6)*K1v + (2/6)*K2v + (2/6)*K3v + (1/6)*K4v)
+            # Simple forward euler
+            x -= _mac_interpolate(x, z, u, uw,
+                                  uh, uox, uoz) * timestep / wdx
+            z -= _mac_interpolate(x, z, v, vw,
+                                  vh, vox, voz) * timestep / wdx
 
             # We now know the value at the next time step should be
-            # the old value at (x, y), however this might not be perfectly
+            # the old value at (x, z), however this might not be perfectly
             # on a grid point, so we interpolate again.
             # Writing to buf[] because we still need to use the old values
             # to advect other quantities.
-            wbuf[idx] = _mac_cubic_interpolate(x, y, w, ww, wh, wox, woy)
+            wbuf[idx] = _mac_cubic_interpolate(x, z, w, ww, wh, wox, woz)
             idx += 1
 
 
@@ -315,7 +290,7 @@ class FluidQuantity:
         self._w = size[0]
         self._h = size[1]
         self._ox = offset[0]
-        self._oy = offset[1]
+        self._oz = offset[1]
         self._dx = dx
         self._val = np.zeros(self._w*self._h, dtype=np.float64)
         self._buf = np.zeros(self._w*self._h, dtype=np.float64)
@@ -329,10 +304,10 @@ class FluidQuantity:
         """Calls kernel function and writes to self._buf
         """
         _advect(self._val, self._buf,
-                self._w, self._h, self._ox, self._oy, self._dx,
+                self._w, self._h, self._ox, self._oz, self._dx,
                 timestep,
-                u._val, u._w, u._h, u._ox, u._oy,
-                v._val, v._w, v._h, v._ox, v._oy)
+                u._val, u._w, u._h, u._ox, u._oz,
+                v._val, v._w, v._h, v._ox, v._oz)
 
 
 class BaselineFluidSolver:
@@ -355,7 +330,7 @@ class BaselineFluidSolver:
         self._rho = rho
 
         # Fluid quantities
-        # _u, _v are the x, y velocities on the border of a grid
+        # _u, _v are the x, z velocities on the border of a grid
         self._p = FluidQuantity(size=(self._w, self._h),
                                 offset=(0.5, 0.5), dx=_dx)
         self._u = FluidQuantity(size=(self._w+1, self._h),
@@ -421,36 +396,36 @@ class BaselineFluidSolver:
         # Source 1
         pt1, pt2 = [0.20, 0.20], [0.35, 0.23]
         _set_block(self._p._val,
-                   self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oy,
+                   self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oz,
                    pt1, pt2, 1.0)
 
         _set_block(self._u._val,
-                   self._u._w, self._u._h, self._u._dx, self._u._ox, self._u._oy,
+                   self._u._w, self._u._h, self._u._dx, self._u._ox, self._u._oz,
                    pt1, pt2, 0.0)
 
         _set_block(self._v._val,
-                   self._v._w, self._v._h, self._v._dx, self._v._ox, self._v._oy,
+                   self._v._w, self._v._h, self._v._dx, self._v._ox, self._v._oz,
                    pt1, pt2, 3.0)
 
         # Source 2
         pt1, pt2 = [0.70, 0.70], [0.85, 0.73]
         _set_block(self._p._val,
-                   self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oy,
+                   self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oz,
                    pt1, pt2, 1.0)
 
         _set_block(self._u._val,
-                   self._u._w, self._u._h, self._u._dx, self._u._ox, self._u._oy,
+                   self._u._w, self._u._h, self._u._dx, self._u._ox, self._u._oz,
                    pt1, pt2, 0.0)
 
         _set_block(self._v._val,
-                   self._v._w, self._v._h, self._v._dx, self._v._ox, self._v._oy,
+                   self._v._w, self._v._h, self._v._dx, self._v._ox, self._v._oz,
                    pt1, pt2, 3.0)
 
 
 def main():
     """Runs simulation
     """
-    SIZE_X, SIZE_Y = 128, 128
+    SIZE_X, SIZE_Z = 128, 128
     FLUID_DENSITY = 1
     # Section 3.2 discusses how to set this in some detail. Related by CFL condition
     # Here is empirically, as long as it's small enough, it is ok.
@@ -461,10 +436,10 @@ def main():
     UPDATE_EVERY = 4
 
     # A buffer that stores a RGB PNG image to be outputted
-    pixels = np.zeros((SIZE_X, SIZE_Y, 3), dtype=np.uint8)
+    pixels = np.zeros((SIZE_X, SIZE_Z, 3), dtype=np.uint8)
 
     fluid_solver = BaselineFluidSolver(
-        size=(SIZE_X, SIZE_Y), rho=FLUID_DENSITY)
+        size=(SIZE_X, SIZE_Z), rho=FLUID_DENSITY)
 
     def update_image(particle_density, image):
         """Update image using particle_density"""
@@ -507,7 +482,7 @@ def main():
             img_index += 1
 
         if step == 230:
-            save_image(pixels, 'forward-euler.png')
+            save_image(pixels, 'rk4.png')
 
         print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
                                 step, step / N_STEPS * 100))
