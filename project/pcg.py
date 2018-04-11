@@ -13,26 +13,49 @@ from PIL import Image
 from utils import timeSince
 
 
-@jit(float64(float64, float64))
+@jit(float64(float64, float64), nopython=True)
 def rootsumsquare(x, y):
     """Returns the sqrt of 2-norm"""
     return (x**2 + y**2)**(1.0/2.0)
 
 
-@jit(float64(float64))
+@jit(float64(float64), nopython=True)
 def smooth(x):
     """Accept range between 0 and 1, and returns tapered values"""
     x = min(abs(x), 1.0)
     return 1.0 - 3.0*(x**2) + 2.0*(x**3)
 
 
-@jit(float64(float64, float64, float64))
+@jit(void(float64[:], float64[:], float64[:], float64[:], float64[:],
+          uint32, uint32), nopython=True)
+def multiply_sparse_poisson(out, a_diag, a_plus_x, a_plus_z, vector,
+                            w, h):
+    """ Mutiple a by Poisson and store to out """
+    idx = 0
+    for iz in range(h):
+        for ix in range(w):
+            element = a_diag[idx] * vector[idx]
+
+            if ix > 0:
+                element += a_plus_x[idx-1] * vector[idx-1]
+            if iz > 0:
+                element += a_plus_z[idx-w] * vector[idx-w]
+            if ix + 1 < w:
+                element += a_plus_x[idx] * vector[idx+1]
+            if iz + 1 < h:
+                element += a_plus_z[idx] * vector[idx+w]
+
+            out[idx] = element
+            idx += 1
+
+
+@jit(float64(float64, float64, float64), nopython=True)
 def two_point_interpolate(a, b, x):
     """Simple linear interpolation"""
     return a*(1-x) + b*x
 
 
-@jit(float64(float64, float64, float64, float64, float64))
+@jit(float64(float64, float64, float64, float64, float64), nopython=True)
 def four_point_interpolate(a, b, c, d, x):
     """Cubic spline, in particular Catmull-Rom Spline"""
     square = x ** 2
@@ -53,9 +76,9 @@ def four_point_interpolate(a, b, c, d, x):
 
 
 @jit(void(float64[:],
-          float64, float64, float64, float64, float64,
+          uint32, uint32, float64, float64, float64,
           float64[:], float64[:],
-          float64))
+          float64), nopython=True)
 def _set_block(v, vw, vh, vdx, vox, voz, top_left, bot_right, value):
     """Sets the fluid quantity within top_left and bot_right rectangle
     to have value returned by f.
@@ -100,52 +123,140 @@ def _calc_neg_div(neg_div, u, uw, v, vw, w, h, dx):
             idx += 1
 
 
-@jit(float64[:](float64[:], float64[:],
-                uint32, uint32, float64,
-                float64, float64,
-                float64, uint32), nopython=True)
-def _calc_pressure(pressure, neg_div, w, h, dx, rho, timestep, tol=1e-5, max_iter=600):
+@jit(void(float64[:], float64[:], float64[:],
+          float64, float64, uint32, uint32, float64), nopython=True)
+def _gen_sparse_poisson(a_diag, a_plus_x, a_plus_z, timestep, rho, w, h, dx):
+    """ Generates a sparse Poisson matrix as per Section 4.3.1 of notes """
+    coefficient = timestep / (rho * dx * dx)
+
+    a_diag.fill(0)
+    a_plus_x.fill(0)
+    a_plus_z.fill(0)
+
+    idx = 0
+    for iz in range(h):
+        for ix in range(w):
+            if ix + 1 < w:
+                a_diag[idx] += coefficient
+                a_diag[idx+1] += coefficient
+                a_plus_x[idx] = -coefficient
+            else:
+                # No neighbour on border
+                a_plus_x[idx] = 0
+
+            if iz + 1 < h:
+                a_diag[idx] += coefficient
+                a_diag[idx+w] += coefficient
+                a_plus_z[idx] = -coefficient
+            else:
+                a_plus_z[idx] = 0
+
+            idx += 1
+
+
+@jit(void(float64[:], float64[:], float64[:], float64[:],
+          uint32, uint32), nopython=True)
+def _modified_incomplete_cholesky(m, a_diag, a_plus_x, a_plus_z, w, h):
+    """ Modified Incomplete Cholesky as per Figure 4.2 of notes. """
+    tau = 0.97
+    sigma = 0.25
+
+    idx = 0
+    for iz in range(h):
+        for ix in range(w):
+            e = a_diag[idx]
+            if ix > 0:
+                xm = a_plus_x[idx-1] * m[idx-1]
+                zm = a_plus_z[idx-1] * m[idx-1]
+                e = e - (xm**2 + tau*xm*zm)
+            if iz > 0:
+                xm = a_plus_x[idx-w] * m[idx-w]
+                zm = a_plus_z[idx-w] * m[idx-w]
+                e = e - (zm**2 + tau*xm*zm)
+
+            # if e < sigma * a_diag[idx]:
+            #     e = a_diag[idx]
+
+            m[idx] = 1.0 / ((e+10**(-20))**(1/2))
+            idx += 1
+
+
+@jit(void(float64[:], float64[:], float64[:], float64[:], float64[:],
+          uint32, uint32), nopython=True)
+def _apply_preconditioner(z, neg_div, m, a_plus_x, a_plus_z, w, h):
+    """ Apply preconditioner matrix m to vector a and output to vector z
+
+    Referenced from Figure 4.3 of notes
+    """
+    idx = 0
+    for iz in range(h):
+        for ix in range(w):
+            element = neg_div[idx]
+
+            if ix > 0:
+                element -= a_plus_x[idx-1] * m[idx-1] * z[idx-1]
+            if iz > 0:
+                element -= a_plus_z[idx-w] * m[idx-w] * z[idx-w]
+
+            z[idx] = element * m[idx]
+            idx += 1
+
+    # Reverse to 0
+    idx = w*h-1
+    for iz in range(h-1, -1, -1):
+        for ix in range(w-1, -1, -1):
+
+            element = z[idx]
+
+            if ix + 1 < w:
+                element -= a_plus_x[idx] * m[idx] * z[idx+1]
+            if iz + 1 < h:
+                element -= a_plus_z[idx] * m[idx] * z[idx+w]
+
+            z[idx] = element * m[idx]
+            idx -= 1
+
+
+@jit(float64[:](float64[:], float64[:], float64[:], float64[:], float64[:],
+                float64[:], float64[:], float64[:],
+                uint32, uint32, float64, uint32))
+def _calc_pressure(pressure, z, search, neg_div, m, a_diag, a_plus_x, a_plus_z,
+                   w, h, tol=1e-5, max_iter=600):
     """Eq. (4.19) Calculate pressure from divergence
 
-    The pressure equation is a standard Laplacian, conjugate gradient is the method
-    of choice for SPD matrices.
-
-    This methods implements a Gauss-Seidel solver, mostly for ease of implementation
+    Conjugate gradient is the method of choice for SPD matrices.
     """
-    coefficient = timestep / (rho * dx * dx)
-    cur_iter = 0
-    max_error = 0
+    pressure.fill(0)
+    _apply_preconditioner(z, neg_div, m,
+                          a_plus_x, a_plus_z, w, h)
+    np.copyto(search, z)
+
+    # Inf p-norm is just max absolute
+    error = np.max(np.absolute(neg_div))
+
+    if error < tol:
+        return np.array([0, error])
+
+    sigma = np.dot(z, neg_div)
 
     for cur_iter in range(max_iter):
-        max_error = 0
-        for iz in range(h):
-            for ix in range(w):
-                idx = ix + iz*w
-                diag, off_diag = 0, 0
+        multiply_sparse_poisson(z, a_diag, a_plus_x, a_plus_z, search,
+                                w, h)
+        alpha = sigma / np.dot(z, search)
+        pressure += alpha * search
+        neg_div -= alpha * z
 
-                # Boundary checking
-                if ix > 0:
-                    diag += coefficient
-                    off_diag -= coefficient * pressure[idx-1]
-                if iz > 0:
-                    diag += coefficient
-                    off_diag -= coefficient * pressure[idx-w]
-                if ix < w - 1:
-                    diag += coefficient
-                    off_diag -= coefficient * pressure[idx+1]
-                if iz < h - 1:
-                    diag += coefficient
-                    off_diag -= coefficient * pressure[idx+w]
+        error = np.max(np.absolute(neg_div))
+        if error < tol:
+            return np.array([cur_iter, error])
 
-                new_pressure = (neg_div[idx] - off_diag) / diag
-                max_error = max(max_error, abs(
-                    pressure[idx] - new_pressure))
-                pressure[idx] = new_pressure
+        _apply_preconditioner(z, neg_div, m,
+                              a_plus_x, a_plus_z, w, h)
+        sigma_new = np.dot(z, neg_div)
+        search = z + search * (sigma_new / sigma)
+        sigma = sigma_new
 
-        if max_error < tol:
-            return np.array([cur_iter, max_error])
-
-    return np.array([max_iter, max_error])
+    return np.array([max_iter, error])
 
 
 @jit(void(float64[:], uint32,
@@ -170,15 +281,6 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
             v[ix+iz*vw] -= diff
             v[ix+(iz+1)*vw] += diff
             idx += 1
-
-    # Set boundary back to 0
-    # No fluid flows in or out of boundary
-    for iz in range(h):
-        u[0+iz*uw] = 0
-        u[w+iz*uw] = 0
-    for ix in range(w):
-        v[ix+0*vw] = 0
-        v[ix+h*vw] = 0
 
 
 @jit(void(float64[:], float64[:], uint32, uint32, uint32, uint32))
@@ -359,6 +461,15 @@ class BaselineFluidSolver:
         self._dx = _dx
         self._rho = rho
 
+        # Sparse pressure matrix
+        self._a_diag = np.zeros(self._w*self._h, dtype=np.float64)
+        self._a_plus_x = np.zeros(self._w*self._h, dtype=np.float64)
+        self._a_plus_z = np.zeros(self._w*self._h, dtype=np.float64)
+        # Preconditioner
+        self._m = np.zeros(self._w*self._h, dtype=np.float64)
+        self._z = np.zeros(self._w*self._h, dtype=np.float64)
+        self._search = np.zeros(self._w*self._h, dtype=np.float64)
+
         # Fluid quantities
         # _u, _v are the x, z velocities on the border of a grid
         self._p = FluidQuantity(size=(self._w, self._h),
@@ -379,7 +490,7 @@ class BaselineFluidSolver:
         # Calc and store negative divergence in buffer
         self.calc_neg_div()
         # Below two are project() in the notes
-        self.calc_pressure(timestep)
+        self.calc_pressure()
         self.make_incompressible(timestep)
         # Advect all quantities
         self.advect(timestep)
@@ -396,10 +507,21 @@ class BaselineFluidSolver:
                       self._v._val, self._v._w,
                       self._w, self._h, self._dx)
 
-    def calc_pressure(self, timestep, tol=1e-5, max_iter=1000):
+    def gen_sparse_poisson(self, timestep):
         """ Docs in kernel function"""
-        iters, error = _calc_pressure(self._pressure, self._neg_div, self._w, self._h,
-                                      self._dx, self._rho, timestep, tol, max_iter)
+        _gen_sparse_poisson(self._a_diag, self._a_plus_x, self._a_plus_z,
+                            timestep, self._rho, self._w, self._h, self._dx)
+
+    def modified_incomplete_cholesky(self):
+        """ Doc in kernel.  Affects self._m """
+        _modified_incomplete_cholesky(self._m, self._a_diag,
+                                      self._a_plus_x, self._a_plus_z, self._w, self._h)
+
+    def calc_pressure(self, tol=1e-5, max_iter=600):
+        """ Docs in kernel function"""
+        iters, error = _calc_pressure(self._pressure, self._z, self._search, self._neg_div, self._m,
+                                      self._a_diag, self._a_plus_x, self._a_plus_z,
+                                      self._w, self._h, tol=tol, max_iter=max_iter)
         print('Calc_pressure() finished in %d iterations, final error is %g' %
               (iters, error))
 
@@ -432,7 +554,7 @@ class BaselineFluidSolver:
         """Sets the condition of the simulation environment.
         """
         # Source 1
-        pt1, pt2 = [0.20, 0.20], [0.35, 0.23]
+        pt1, pt2 = np.array([0.20, 0.20]), np.array([0.35, 0.23])
         _set_block(self._p._val,
                    self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oz,
                    pt1, pt2, 1.0)
@@ -446,7 +568,7 @@ class BaselineFluidSolver:
                    pt1, pt2, 3.0)
 
         # Source 2
-        pt1, pt2 = [0.70, 0.70], [0.85, 0.73]
+        pt1, pt2 = np.array([0.70, 0.70]), np.array([0.85, 0.73])
         _set_block(self._p._val,
                    self._p._w, self._p._h, self._p._dx, self._p._ox, self._p._oz,
                    pt1, pt2, 1.0)
@@ -466,7 +588,7 @@ def main():
     SIZE_X, SIZE_Z = 128, 128
     FLUID_DENSITY = 1
     # Section 3.2 discusses how to set this in some detail. Related by CFL condition
-    # Here is empirically, as long as it's small enough, it is ok.
+    # Here is empiricallz, as long as it's small enough, it is ok.
     TIMESTEP = 0.005
     MAX_TIME = 8
     N_STEPS = (int)(MAX_TIME/TIMESTEP)
@@ -505,7 +627,10 @@ def main():
 
     img_index = 0
     start_time = time.time()
+    fluid_solver.gen_sparse_poisson(TIMESTEP)
+    fluid_solver.modified_incomplete_cholesky()
     for step in range(1, N_STEPS+1):
+        print(step)
         fluid_solver.set_condition()
         fluid_solver.step(TIMESTEP)
 
@@ -518,9 +643,6 @@ def main():
             # Uncomment to output PNG
             # save_image(pixels, 'output/frame{:05d}.png'.format(img_index))
             img_index += 1
-
-        if step == 230:
-            save_image(pixels, 'rk4.png')
 
         print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
                                 step, step / N_STEPS * 100))

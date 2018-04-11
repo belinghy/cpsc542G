@@ -3,10 +3,11 @@ This work is based off of Bridson's "Fluid Simulation", SIGGRAPH 2007 Notes.
 https://www.cs.ubc.ca/~rbridson/fluidsimulation/fluids_notes.pdf
 """
 
-import numpy as np
 import time
 
+import numpy as np
 from PIL import Image
+
 from utils import timeSince
 
 

@@ -171,6 +171,9 @@ def _make_incompressible(u, uw, v, vw, pressure, w, h, dx, rho, timestep):
             v[ix+(iz+1)*vw] += diff
             idx += 1
 
+
+@jit(void(float64[:], float64[:], uint32, uint32, uint32, uint32))
+def _set_boundary_condition(u, v, w, h, uw, vw):
     # Set boundary back to 0
     # No fluid flows in or out of boundary
     for iz in range(h):
@@ -354,6 +357,11 @@ class BaselineFluidSolver:
         # Advect all quantities
         self.advect(timestep)
 
+    def set_boundary_condition(self):
+        """ Docs in kernel function """
+        _set_boundary_condition(self._u._val, self._v._val,
+                                self._w, self._h, self._u._w, self._v._w)
+
     def calc_neg_div(self):
         """ Docs in kernel function"""
         _calc_neg_div(self._neg_div,
@@ -375,6 +383,7 @@ class BaselineFluidSolver:
                              self._pressure,
                              self._w, self._h, self._dx,
                              self._rho, timestep)
+        self.set_boundary_condition()
 
     def advect(self, timestep):
         """Calculate fluid quantity values at the next time step.
@@ -389,6 +398,8 @@ class BaselineFluidSolver:
         self._p.swap()
         self._u.swap()
         self._v.swap()
+
+        self.set_boundary_condition()
 
     def set_condition(self):
         """Sets the condition of the simulation environment.
