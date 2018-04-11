@@ -159,7 +159,6 @@ def _gen_sparse_poisson(a_diag, a_plus_x, a_plus_z, timestep, rho, w, h, dx):
 def _modified_incomplete_cholesky(m, a_diag, a_plus_x, a_plus_z, w, h):
     """ Modified Incomplete Cholesky as per Figure 4.2 of notes. """
     tau = 0.97
-    sigma = 0.25
 
     idx = 0
     for iz in range(h):
@@ -173,9 +172,6 @@ def _modified_incomplete_cholesky(m, a_diag, a_plus_x, a_plus_z, w, h):
                 xm = a_plus_x[idx-w] * m[idx-w]
                 zm = a_plus_z[idx-w] * m[idx-w]
                 e = e - (zm**2 + tau*xm*zm)
-
-            # if e < sigma * a_diag[idx]:
-            #     e = a_diag[idx]
 
             m[idx] = 1.0 / ((e+10**(-20))**(1/2))
             idx += 1
@@ -384,6 +380,7 @@ def _advect(w, wbuf,
             # The notes does not say which to use, but recommend against
             # using forward euler.  Says at least RK2, or modified euler
             # for anything involving a rotation.
+            # Divide by wdx to simulate the non-normalized velocity
             K1u = _mac_interpolate(x, z, u, uw, uh, uox, uoz) / wdx
             K1v = _mac_interpolate(x, z, v, vw, vh, vox, voz) / wdx
             x2 = x - 0.5 * timestep * K1u
@@ -643,6 +640,9 @@ def main():
             # Uncomment to output PNG
             # save_image(pixels, 'output/frame{:05d}.png'.format(img_index))
             img_index += 1
+
+        if step == 230:
+            save_image(pixels, 'pcg.png')
 
         print('%s (%d %d%%)' % (timeSince(start_time, step / N_STEPS),
                                 step, step / N_STEPS * 100))

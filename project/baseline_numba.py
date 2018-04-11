@@ -282,6 +282,7 @@ def _advect(w, wbuf,
             # The notes does not say which to use, but recommend against
             # using forward euler.  Says at least RK2, or modified euler
             # for anything involving a rotation.
+            # Divide by wdx to simulate the non-normalized velocity
             K1u = _mac_interpolate(x, z, u, uw, uh, uox, uoz) / wdx
             K1v = _mac_interpolate(x, z, v, vw, vh, vox, voz) / wdx
             x2 = x - 0.5 * timestep * K1u

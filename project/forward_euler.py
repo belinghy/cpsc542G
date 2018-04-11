@@ -270,6 +270,7 @@ def _advect(w, wbuf,
             z = iz + woz
 
             # Simple forward euler
+            # Divide by wdx to simulate the non-normalized velocity
             x -= _mac_interpolate(x, z, u, uw,
                                   uh, uox, uoz) * timestep / wdx
             z -= _mac_interpolate(x, z, v, vw,
